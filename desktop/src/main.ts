@@ -1,9 +1,10 @@
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, type MenuItemConstructorOptions } from 'electron';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell, type MenuItemConstructorOptions } from 'electron';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 
 const MAC = process.platform === 'darwin';
@@ -163,6 +164,23 @@ function healthy(nonce: string, expected: BundleIdentity): Promise<boolean> {
   });
 }
 
+function systemLine() {
+  let codePage = '';
+  if (process.platform === 'win32') {
+    try { codePage = `, ANSI code page ${/ACP\s+REG_SZ\s+(\d+)/.exec(execFileSync('reg', ['query', 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Nls\\CodePage', '/v', 'ACP'], { encoding: 'utf8', windowsHide: true }))?.[1] ?? '?'}`; } catch { codePage = ''; }
+  }
+  return `${process.platform} ${os.release()} ${process.arch}, locale ${app.getSystemLocale()}${codePage}`;
+}
+
+function diagnostics() {
+  const logs = path.join(app.getPath('userData'), 'logs');
+  const tail = (name: string) => {
+    try { return fs.readFileSync(path.join(logs, name), 'utf8').split('\n').slice(-200).join('\n').trim(); } catch { return '(missing)'; }
+  };
+  const text = `PancakeSlicer v${app.getVersion()}\n${systemLine()}\n\n--- server.log (last 200 lines) ---\n${tail('server.log')}\n\n--- server.prev.log (last 200 lines) ---\n${tail('server.prev.log')}`;
+  return '```\n' + text.split(os.homedir()).join('~') + '\n```';
+}
+
 async function startServer(): Promise<string> {
   const { web, engine } = payload();
   const expected = await bundleIdentity(web, engine);
@@ -294,8 +312,9 @@ function menu() {
     {
       role: 'help',
       submenu: [
-        { label: 'Report a problem…', click: () => void shell.openExternal('https://github.com/ZimengXiong/PancakeSlicer/issues/new?body=' +
-          encodeURIComponent(`PancakeSlicer v${app.getVersion()}, ${process.platform} ${process.arch}\n\nAttach server.log from Help > Open logs folder.`)) },
+        { label: 'Report a problem…', click: () => { clipboard.writeText(diagnostics()); void shell.openExternal('https://github.com/ZimengXiong/PancakeSlicer/issues/new?template=bug.yml&' +
+          new URLSearchParams({ version: `v${app.getVersion()}`, os: systemLine() })); } },
+        { label: 'Copy diagnostics', click: () => clipboard.writeText(diagnostics()) },
         { label: 'Open logs folder', click: () => void shell.openPath(path.join(app.getPath('userData'), 'logs')) },
       ],
     },
